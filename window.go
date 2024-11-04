@@ -1,5 +1,3 @@
-//+build windows
-
 package wui
 
 import (
@@ -8,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/gonutz/w32/v2"
@@ -73,6 +72,7 @@ func (s WindowState) toCmd() int {
 
 func NewWindow() *Window {
 	w := &Window{
+		className:  "wailsWindow",
 		background: ColorButtonFace,
 		cursor:     CursorArrow,
 		alpha:      255,
@@ -82,6 +82,7 @@ func NewWindow() *Window {
 }
 
 type Window struct {
+	className        string
 	handle           w32.HWND
 	parent           *Window
 	hidesBorder      bool
@@ -111,6 +112,7 @@ type Window struct {
 	accelTable       w32.HACCEL
 	lastFocus        w32.HWND
 	alpha            uint8
+	onMove           func(x, y int)
 	onShow           func()
 	onClose          func()
 	onCanClose       func() bool
@@ -120,7 +122,9 @@ type Window struct {
 	onMouseUp        func(button MouseButton, x, y int)
 	onKeyDown        func(key int)
 	onKeyUp          func(key int)
+	onChar           func(r rune)
 	onResize         func()
+	onMessage        MessageCallback
 }
 
 func (w *Window) Children() []Control {
@@ -200,6 +204,20 @@ func (w *Window) getHandle() w32.HWND {
 
 func (w *Window) getInstance() w32.HINSTANCE {
 	return w32.HINSTANCE(w32.GetWindowLong(w.handle, w32.GWL_HINSTANCE))
+}
+
+func (w *Window) ClassName() string {
+	return w.className
+}
+
+// SetClassName sets the identifier used for registering this window's class
+// using RegisterClass or RegisterClassEx when first creating this window. This
+// can only be done before the window is shown. For a running window this name
+// will not be updated.
+func (w *Window) SetClassName(name string) {
+	if w.handle == 0 {
+		w.className = name
+	}
 }
 
 func (w *Window) Title() string { return w.title }
@@ -322,7 +340,7 @@ func (w *Window) SetBounds(x, y, width, height int) {
 		// The window will receive a WM_SIZE which will handle anchoring child
 		// controls.
 		w32.SetWindowPos(
-			w.handle, 0,
+			w.handle, w32.HWND_TOPMOST,
 			x, y, width, height,
 			w32.SWP_NOOWNERZORDER|w32.SWP_NOZORDER,
 		)
@@ -456,6 +474,10 @@ func (w *Window) InnerBounds() (x, y, width, height int) {
 		height = w.height - int(r.Height())
 	}
 	return
+}
+
+func (w *Window) Focus() {
+	w32.SetForegroundWindow(w.handle)
 }
 
 func (w *Window) SetInnerBounds(x, y, width, height int) {
@@ -607,7 +629,12 @@ func (w *Window) OnMouseMove() func(x, y int) {
 }
 
 func (w *Window) SetOnMouseMove(f func(x, y int)) {
+	println("Set on mouse move")
 	w.onMouseMove = f
+}
+
+func (w *Window) SetOnMove(f func(x, y int)) {
+	w.onMove = f
 }
 
 func (w *Window) OnMouseWheel() func(x, y int, delta float64) {
@@ -650,12 +677,37 @@ func (w *Window) SetOnKeyUp(f func(key int)) {
 	w.onKeyUp = f
 }
 
+func (w *Window) SetOnChar(f func(r rune)) {
+	w.onChar = f
+}
+
+func (w *Window) OnChar() func(r rune) {
+	return w.onChar
+}
+
 func (w *Window) OnResize() func() {
 	return w.onResize
 }
 
 func (w *Window) SetOnResize(f func()) {
 	w.onResize = f
+}
+
+// MessageCallback is used as a hook into the main window procedure. It will run
+// at its very start and may intercept all messages.
+// If the callback returns true for handled, then the message is processed no
+// further and the message loop returns the given result code.
+// If the callback returns false for handled, then the message goes to this
+// library's handler for it or to the default window procedure defined in the
+// Windows API if it is not handled.
+type MessageCallback func(window uintptr, msg uint32, w, l uintptr) (handled bool, result uintptr)
+
+func (w *Window) OnMessage() MessageCallback {
+	return w.onMessage
+}
+
+func (w *Window) SetOnMessage(f MessageCallback) {
+	w.onMessage = f
 }
 
 func (w *Window) Close() {
@@ -730,12 +782,21 @@ type EnabledControl interface {
 }
 
 func (w *Window) onMsg(window w32.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+	if w.onMessage != nil {
+		handled, result := w.onMessage(uintptr(window), msg, wParam, lParam)
+		if handled {
+			return result
+		}
+	}
+
 	mouseX := int(lParam & 0xFFFF)
 	mouseY := int(lParam&0xFFFF0000) >> 16
+
 	switch msg {
 	case w32.WM_MOUSEMOVE:
+	case 32:
 		if w.onMouseMove != nil {
-			w.onMouseMove(mouseX, mouseY)
+			w.onMouseMove(mouseX/128, mouseY/128)
 			return 0
 		}
 	case w32.WM_MOUSEWHEEL:
@@ -781,6 +842,16 @@ func (w *Window) onMsg(window w32.HWND, msg uint32, wParam, lParam uintptr) uint
 			w.onKeyUp(int(wParam))
 			return 0
 		}
+	case w32.WM_CHAR:
+		if w.onChar != nil {
+			w.onChar(utf16.Decode([]uint16{uint16(wParam)})[0])
+			return 0
+		}
+	case w32.WM_MOVE:
+		if w.onMove != nil {
+			w.onMove(mouseX, mouseY)
+			return 0
+		}
 	case w32.WM_COMMAND:
 		w.onWM_COMMAND(wParam, lParam)
 		return 0
@@ -800,7 +871,7 @@ func (w *Window) onMsg(window w32.HWND, msg uint32, wParam, lParam uintptr) uint
 		if w.onResize != nil {
 			w.onResize()
 		}
-		w32.InvalidateRect(window, nil, true)
+		// w32.InvalidateRect(window, nil, true)
 		switch wParam {
 		case w32.SIZE_MAXIMIZED:
 			w.state = WindowMaximized
@@ -883,8 +954,6 @@ func (w *Window) onWM_DRAWITEM(wParam, lParam uintptr) {
 	}
 }
 
-const className = "wui_window_class"
-
 func (w *Window) Show() error {
 	if w.handle != 0 {
 		return errors.New("wui.Window.Show: window already visible")
@@ -906,7 +975,7 @@ func (w *Window) Show() error {
 		Background: w32.CreateSolidBrush(uint32(w.background)),
 		WndProc:    syscall.NewCallback(w.onMsg),
 		Cursor:     w.cursor.handle,
-		ClassName:  syscall.StringToUTF16Ptr(className),
+		ClassName:  syscall.StringToUTF16Ptr(w.className),
 	}
 	atom := w32.RegisterClassEx(&class)
 	if atom == 0 {
@@ -920,7 +989,7 @@ func (w *Window) Show() error {
 
 	window := w32.CreateWindowEx(
 		w.extendedStyle(),
-		syscall.StringToUTF16Ptr(className),
+		syscall.StringToUTF16Ptr(w.className),
 		syscall.StringToUTF16Ptr(w.title),
 		w.style(),
 		w.x, w.y, w.width, w.height,
@@ -930,6 +999,7 @@ func (w *Window) Show() error {
 		return errors.New("wui.Window.Show: CreateWindowEx failed")
 	}
 	w.handle = window
+
 	if w.alpha != 255 {
 		w32.SetLayeredWindowAttributes(w.handle, 0, w.alpha, w32.LWA_ALPHA)
 	}
@@ -1180,20 +1250,25 @@ func (w *Window) ShowModal() error {
 
 	window := w32.CreateWindowEx(
 		w.extendedStyle(),
-		syscall.StringToUTF16Ptr(className),
+		syscall.StringToUTF16Ptr(w.className),
 		syscall.StringToUTF16Ptr(w.title),
 		w.style(),
 		w.x, w.y, w.width, w.height,
 		w.parent.handle,
 		0, 0, nil,
 	)
+
+	println("Created window", "exStyle ", uint(w.extendedStyle()), "Style ", uint(w.style()))
 	if window == 0 {
 		return errors.New("wui.Window.ShowModal: CreateWindowEx failed")
 	}
 	w.handle = window
-	if w.alpha != 255 {
-		w32.SetLayeredWindowAttributes(w.handle, 0, w.alpha, w32.LWA_ALPHA)
+
+	if w.alpha != 0 {
+		w32.SetLayeredWindowAttributes(w.handle, 0, 0, w32.LWA_COLORKEY)
+		w32.SetWindowLong(w.handle, w32.GWL_STYLE, w32.WS_CHILDWINDOW)
 	}
+
 	if w.hidesCloseButton {
 		w32.EnableMenuItem(
 			w32.GetSystemMenu(w.handle, false),
@@ -1217,7 +1292,7 @@ func (w *Window) ShowModal() error {
 	w.createContents()
 	w.applyIcon()
 	w32.ShowWindow(window, state.toCmd())
-	w32.EnableWindow(w.parent.handle, false)
+	w32.EnableWindow(w.parent.handle, true)
 	w.readBounds()
 	if w.onShow != nil {
 		w.onShow()
@@ -1524,7 +1599,7 @@ func (w *Window) changeStyles(change func()) {
 		// changes in styles.
 		w32.SetWindowPos(
 			w.handle, 0, 0, 0, 0, 0,
-			w32.SWP_FRAMECHANGED|w32.SWP_NOMOVE|w32.SWP_NOZORDER|
+			w32.SWP_FRAMECHANGED|w32.SWP_SHOWWINDOW|w32.SWP_NOMOVE|w32.SWP_NOZORDER|
 				w32.SWP_NOSIZE|w32.SWP_NOACTIVATE,
 		)
 		w32.ShowWindow(w.handle, w32.SW_SHOWNORMAL)

@@ -1,4 +1,4 @@
-module github.com/gonutz/wui
+module github.com/brys0/wui-layered
 
 go 1.11
 
