@@ -1244,13 +1244,8 @@ func (w *Window) ShowModal() error {
 	}
 	w.handle = window
 
-	w32.SetWindowLong(
-		w.handle,
-		w32.GWL_EXSTYLE,
-		w32.WS_EX_LAYERED,
-	)
 	w32.SetLayeredWindowAttributes(w.handle, 0, 0, w32.LWA_COLORKEY)
-	w32.SetWindowLong(w.handle, w32.GWL_EXSTYLE, w32.WS_CHILDWINDOW)
+	w32.SetWindowLong(w.handle, w32.GWL_STYLE, w32.WS_CHILDWINDOW)
 
 	if w.hidesCloseButton {
 		w32.EnableMenuItem(
