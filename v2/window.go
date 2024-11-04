@@ -1243,10 +1243,15 @@ func (w *Window) ShowModal() error {
 		return errors.New("wui.Window.ShowModal: CreateWindowEx failed")
 	}
 	w.handle = window
-	if w.alpha != 255 {
-		w32.SetLayeredWindowAttributes(w.handle, 0, 0, w32.LWA_COLORKEY)
-		w32.SetWindowLong(w.handle, w32.GWL_EXSTYLE, w32.WS_CHILDWINDOW)
-	}
+
+	w32.SetWindowLong(
+		w.handle,
+		w32.GWL_EXSTYLE,
+		w32.WS_EX_LAYERED,
+	)
+	w32.SetLayeredWindowAttributes(w.handle, 0, 0, w32.LWA_COLORKEY)
+	w32.SetWindowLong(w.handle, w32.GWL_EXSTYLE, w32.WS_CHILDWINDOW)
+
 	if w.hidesCloseButton {
 		w32.EnableMenuItem(
 			w32.GetSystemMenu(w.handle, false),
