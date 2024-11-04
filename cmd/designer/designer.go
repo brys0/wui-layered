@@ -15,8 +15,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/brys0/wui-layered"
 	"github.com/gonutz/w32/v2"
-	"github.com/gonutz/wui"
 )
 
 // TODO Have color property for window background.
@@ -1965,7 +1965,7 @@ func generateCode(w *wui.Window, isPreview bool) []byte {
 
 package main
 
-import "github.com/gonutz/wui"
+import "github.com/brys0/wui-layered"
 
 func main() {`)
 

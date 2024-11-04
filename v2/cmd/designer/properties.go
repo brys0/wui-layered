@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gonutz/wui/v2"
+	"github.com/brys0/wui-layered/v2"
 )
 
 type property struct {
