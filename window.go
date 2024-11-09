@@ -82,49 +82,53 @@ func NewWindow() *Window {
 }
 
 type Window struct {
-	className        string
-	handle           w32.HWND
-	parent           *Window
-	hidesBorder      bool
-	fixedSize        bool
-	hidesMinButton   bool
-	hidesMaxButton   bool
-	hidesCloseButton bool
-	title            string
-	x                int
-	y                int
-	width            int
-	height           int
-	lastInnerWidth   int
-	lastInnerHeight  int
-	state            WindowState
-	background       Color
-	cursor           *Cursor
-	menu             *Menu
-	menuStrings      []*MenuString
-	font             *Font
-	controls         []Control
-	children         []Control
-	icon             *Icon
-	showConsole      bool
-	altF4disabled    bool
-	shortcuts        []shortcut
-	accelTable       w32.HACCEL
-	lastFocus        w32.HWND
-	alpha            uint8
-	onMove           func(x, y int)
-	onShow           func()
-	onClose          func()
-	onCanClose       func() bool
-	onMouseMove      func(x, y int)
-	onMouseWheel     func(x, y int, delta float64)
-	onMouseDown      func(button MouseButton, x, y int)
-	onMouseUp        func(button MouseButton, x, y int)
-	onKeyDown        func(key int)
-	onKeyUp          func(key int)
-	onChar           func(r rune)
-	onResize         func()
-	onMessage        MessageCallback
+	className               string
+	handle                  w32.HWND
+	parent                  *Window
+	hidesBorder             bool
+	fixedSize               bool
+	hidesMinButton          bool
+	hidesMaxButton          bool
+	hidesCloseButton        bool
+	title                   string
+	x                       int
+	y                       int
+	width                   int
+	height                  int
+	lastInnerWidth          int
+	lastInnerHeight         int
+	state                   WindowState
+	background              Color
+	cursor                  *Cursor
+	menu                    *Menu
+	menuStrings             []*MenuString
+	font                    *Font
+	controls                []Control
+	children                []Control
+	icon                    *Icon
+	showConsole             bool
+	altF4disabled           bool
+	shortcuts               []shortcut
+	accelTable              w32.HACCEL
+	lastFocus               w32.HWND
+	alpha                   uint8
+	onMove                  func(x, y int)
+	onShow                  func()
+	onClose                 func()
+	onCanClose              func() bool
+	onMouseMove             func(x, y int)
+	onMouseWheel            func(x, y int, delta float64)
+	onMouseDown             func(button MouseButton, x, y int)
+	onMouseUp               func(button MouseButton, x, y int)
+	onKeyDown               func(key int)
+	onKeyUp                 func(key int)
+	onChar                  func(r rune)
+	onResize                func()
+	onMessage               MessageCallback
+	fullscreen              bool
+	previousWindowStyle     uintptr
+	previousWindowEXStyle   uintptr
+	previousWindowPlacement *w32.WINDOWPLACEMENT
 }
 
 func (w *Window) Children() []Control {
@@ -250,13 +254,22 @@ func (w *Window) style() uint {
 		s |= w32.WS_MAXIMIZEBOX
 	}
 
+	if w.fullscreen {
+		s = uint(w.previousWindowStyle)&w32.WS_OVERLAPPEDWINDOW | (w32.WS_POPUP | w32.WS_VISIBLE)
+	}
 	return s
 }
 
 func (w *Window) extendedStyle() uint {
+	var s uint
 	if w.alpha != 255 {
-		return w32.WS_EX_LAYERED
+		s |= w32.WS_EX_LAYERED
 	}
+
+	if w.fullscreen {
+		s |= uint(w.previousWindowEXStyle) & w32.WS_EX_DLGMODALFRAME
+	}
+
 	return 0
 }
 
@@ -355,6 +368,18 @@ func (w *Window) SetBounds(x, y, width, height int) {
 	}
 }
 
+func (w *Window) setFullScreenSize(monitor w32.MONITORINFO) {
+	w32.SetWindowPos(
+		w.handle,
+		w32.HWND_TOP,
+		int(monitor.RcMonitor.Left),
+		int(monitor.RcMonitor.Top),
+		int(monitor.RcMonitor.Right-monitor.RcMonitor.Left),
+		int(monitor.RcMonitor.Bottom-monitor.RcMonitor.Top),
+		w32.SWP_NOZORDER|w32.SWP_FRAMECHANGED,
+	)
+}
+
 func repositionChidrenByAnchors(c Container, oldW, oldH, newW, newH int) {
 	dw := newW - oldW
 	dh := newH - oldH
@@ -451,6 +476,48 @@ func (w *Window) SetInnerHeight(height int) {
 func (w *Window) InnerSize() (width, height int) {
 	_, _, width, height = w.InnerBounds()
 	return
+}
+
+func (w *Window) Fullscreen() {
+	if w.fullscreen {
+		return
+	}
+
+	w.previousWindowStyle = w32.GetWindowLongPtr(w.handle, w32.GWL_STYLE)
+	w.previousWindowStyle = w32.GetWindowLongPtr(w.handle, w32.GWL_EXSTYLE)
+	monitor := w32.MonitorFromWindow(w.handle, w32.MONITOR_DEFAULTTOPRIMARY)
+
+	var monitorInfo w32.MONITORINFO
+
+	monitorInfo.CbSize = uint32(unsafe.Sizeof(monitorInfo))
+	if !w32.GetMonitorInfo(monitor, &monitorInfo) {
+		return
+	}
+	var placement w32.WINDOWPLACEMENT
+	if !w32.GetWindowPlacement(w.handle, &placement) {
+		return
+	}
+	w.previousWindowPlacement = &placement
+	w.fullscreen = true
+	w.changeStyles(func() {})
+	w.setFullScreenSize(monitorInfo)
+}
+
+func (w *Window) UnFullscreen() {
+	if !w.fullscreen {
+		return
+	}
+	w.fullscreen = false
+	w32.SetWindowPlacement(w.handle, w.previousWindowPlacement)
+
+	w.changeStyles(func() {})
+	w.SetBounds(
+		int(w.previousWindowPlacement.RcNormalPosition.Left),
+		int(w.previousWindowPlacement.RcNormalPosition.Top),
+		int(w.previousWindowPlacement.RcNormalPosition.Width()),
+		int(w.previousWindowPlacement.RcNormalPosition.Height()),
+	)
+
 }
 
 func (w *Window) SetInnerSize(width, height int) {
@@ -629,7 +696,6 @@ func (w *Window) OnMouseMove() func(x, y int) {
 }
 
 func (w *Window) SetOnMouseMove(f func(x, y int)) {
-	println("Set on mouse move")
 	w.onMouseMove = f
 }
 
@@ -1258,7 +1324,6 @@ func (w *Window) ShowModal() error {
 		0, 0, nil,
 	)
 
-	println("Created window", "exStyle ", uint(w.extendedStyle()), "Style ", uint(w.style()))
 	if window == 0 {
 		return errors.New("wui.Window.ShowModal: CreateWindowEx failed")
 	}

@@ -3,6 +3,7 @@ package wui
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"io/ioutil"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gonutz/w32/v2"
 )
+
 
 // Icon holds a window icon. You can use a pre-defined Icon... variable (see
 // below) or create a custom icon with NewIconFromImage, NewIconFromExeResource,
@@ -145,6 +147,14 @@ func NewIconFromFile(path string) (*Icon, error) {
 	return &Icon{handle: icon}, nil
 }
 
+func LoadIconWithResourceID(instance w32.HINSTANCE, resId uint16) (*Icon, error) {
+	ico := new(Icon)
+	var err error
+	if ico.handle = w32.LoadIcon(instance, &resId); ico.handle == 0 {
+		err = errors.New(fmt.Sprintf("Cannot load icon from resource with id %v", resId))
+	}
+	return ico, err
+}
 // NewIconFromReader loads an icon from the given reader. The format must be
 // .ico, not an image.
 func NewIconFromReader(r io.Reader) (*Icon, error) {

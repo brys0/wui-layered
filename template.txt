@@ -1,0 +1,82 @@
+func (f *Frontend) WindowFullscreen() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if f.frontendOptions.Frameless && f.frontendOptions.DisableResize == false {
+		f.ExecJS("window.wails.flags.enableResize = false;")
+	}
+	f.mainWindow.Fullscreen()
+}
+
+func (f *Frontend) WindowUnfullscreen() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if f.frontendOptions.Frameless && f.frontendOptions.DisableResize == false {
+		f.ExecJS("window.wails.flags.enableResize = true;")
+	}
+	f.mainWindow.UnFullscreen()
+}
+
+func (w *Window) Fullscreen() {
+	if w.Form.IsFullScreen() {
+		return
+	}
+	if w.framelessWithDecorations {
+		win32.ExtendFrameIntoClientArea(w.Handle(), false)
+	}
+	w.Form.SetMaxSize(0, 0)
+	w.Form.SetMinSize(0, 0)
+	w.Form.Fullscreen()
+}
+
+func (w *Window) UnFullscreen() {
+	if !w.Form.IsFullScreen() {
+		return
+	}
+	if w.framelessWithDecorations {
+		win32.ExtendFrameIntoClientArea(w.Handle(), true)
+	}
+	w.Form.UnFullscreen()
+	w.SetMinSize(w.minWidth, w.minHeight)
+	w.SetMaxSize(w.maxWidth, w.maxHeight)
+}
+
+func (fm *Form) Fullscreen() {
+	if fm.isFullscreen {
+		return
+	}
+
+	fm.previousWindowStyle = uint32(w32.GetWindowLongPtr(fm.hwnd, w32.GWL_STYLE))
+	fm.previousWindowExStyle = uint32(w32.GetWindowLong(fm.hwnd, w32.GWL_EXSTYLE))
+
+	monitor := w32.MonitorFromWindow(fm.hwnd, w32.MONITOR_DEFAULTTOPRIMARY)
+	var monitorInfo w32.MONITORINFO
+	monitorInfo.CbSize = uint32(unsafe.Sizeof(monitorInfo))
+	if !w32.GetMonitorInfo(monitor, &monitorInfo) {
+		return
+	}
+	if !w32.GetWindowPlacement(fm.hwnd, &fm.previousWindowPlacement) {
+		return
+	}
+	// According to https://devblogs.microsoft.com/oldnewthing/20050505-04/?p=35703 one should use w32.WS_POPUP | w32.WS_VISIBLE
+	w32.SetWindowLong(fm.hwnd, w32.GWL_STYLE, fm.previousWindowStyle & ^uint32(w32.WS_OVERLAPPEDWINDOW) | (w32.WS_POPUP|w32.WS_VISIBLE))
+	w32.SetWindowLong(fm.hwnd, w32.GWL_EXSTYLE, fm.previousWindowExStyle & ^uint32(w32.WS_EX_DLGMODALFRAME))
+	fm.isFullscreen = true
+	w32.SetWindowPos(fm.hwnd, w32.HWND_TOP,
+		int(monitorInfo.RcMonitor.Left),
+		int(monitorInfo.RcMonitor.Top),
+		int(monitorInfo.RcMonitor.Right-monitorInfo.RcMonitor.Left),
+		int(monitorInfo.RcMonitor.Bottom-monitorInfo.RcMonitor.Top),
+		w32.SWP_NOOWNERZORDER|w32.SWP_FRAMECHANGED)
+}
+
+func (fm *Form) UnFullscreen() {
+	if !fm.isFullscreen {
+		return
+	}
+	w32.SetWindowLong(fm.hwnd, w32.GWL_STYLE, fm.previousWindowStyle)
+	w32.SetWindowLong(fm.hwnd, w32.GWL_EXSTYLE, fm.previousWindowExStyle)
+	w32.SetWindowPlacement(fm.hwnd, &fm.previousWindowPlacement)
+	fm.isFullscreen = false
+	w32.SetWindowPos(fm.hwnd, 0, 0, 0, 0, 0,
+		w32.SWP_NOMOVE|w32.SWP_NOSIZE|w32.SWP_NOZORDER|w32.SWP_NOOWNERZORDER|w32.SWP_FRAMECHANGED)
+}
